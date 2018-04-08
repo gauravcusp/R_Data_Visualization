@@ -1,0 +1,1 @@
+This repository is for the solution of [first assignment](https://github.com/DS-GA3001-015/DV_NYU_course_material/blob/master/Exercises/03_olympics-graded/assignment1_winter_olympics.Rmd) of Data Visualization class.

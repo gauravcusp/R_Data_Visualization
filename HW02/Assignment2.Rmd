@@ -1,0 +1,374 @@
+---
+title: "Assignment2"
+author: "Gaurav Bhardwaj"
+date: "3/10/2018"
+output:
+  html_document: default
+  pdf_document: default
+---
+
+# Assignment 2: Mapping Fire Incidents and FDNY Response Times
+
+## Overview
+For this assignment, we are going to investigate serious incidents requiring the fire department to respond. Using data about the locations of firehouses and fires occurring in New York City, we want to know whether response times to fires differ across the city. Second, we will try to focus on one possible variable that could affect response times – the distance from the firehouse – and see whether we find the (expected) effect.
+To keep this homework manageable, I am leaving out another part of the investigation: What is the effect of demographic and/or income characteristics of the neighborhood on response times. This is likely a bit more sensitive but also relevant from a public policy perspective.
+
+# Tasks
+```{r}
+## Importing Libraries
+
+library(tidyverse)
+library(rgeos)
+library(rgdal)
+library(leaflet)
+library(htmlwidgets)
+require(stringr)
+library(lubridate)
+library(ggplot2)
+library(plotly)
+library(KernSmooth)
+library(sp)
+library(leaflet.extras)
+```
+
+## 1. Location of Severe Fires
+
+Provide a leaflet map of the severe fires contained in the file severe_incidents.csv. Ignore locations that fall outside the five boroughs of New York City. Provide at least three pieces of information on the incident in a popup.
+
+Before than we need to take care of the outliers in the data and the data points not belonging to NYC.
+
+```{r}
+sevFire <- read.csv('Data/severe_incidents.csv')
+
+sevFire <- sevFire %>% filter(
+  is.na(sevFire$Latitude)==FALSE &
+    is.na(sevFire$Longitude)==FALSE)
+
+## Creating geofence to remove outliers
+
+sevFire <- subset(sevFire, sevFire$Latitude < 40.890750)
+sevFire <- subset(sevFire, sevFire$Longitude > -74.342944)
+sevFire <- subset(sevFire, sevFire$Latitude > 40.491667)
+sevFire <- subset(sevFire, sevFire$Longitude < -73.724448)
+```
+
+Now that we have our data clean, let's plot a simple map.
+
+```{r echo=FALSE}
+content <- paste("Incident Type:",head(sevFire$INCIDENT_TYPE_DESC),"<br/>",
+                 "Incident Time:",sevFire$INCIDENT_DATE_TIME,"<br/>",
+                 "Incident Location:",sevFire$BOROUGH_DESC,"<br/>",
+                 "Severity:",sevFire$FIRE_SPREAD_DESC,"<br/>")
+
+r <- leaflet(sevFire) %>%
+  addProviderTiles(providers$CartoDB.Positron) %>%
+  addCircles(lng = ~Longitude, lat = ~Latitude, color='red', popup= content) %>%
+  #fitBounds(-74.240612,40.849800,  -73.771518, 40.595493)
+  setView(-73.947453, 40.737046,zoom=10)
+
+r
+```
+
+## 2. Layers and Clusters
+### a) Color by Type of Property
+
+Start with the previous map. Now, distinguish the markers of the fire locations by PROPERTY_USE_DESC, i.e. what kind of property was affected. If there are too many categories, collapse some categories. Choose an appropriate coloring scheme to map the locations by type of affected property. Add a legend informing the user about the color scheme. Also make sure that the information about the type of affected property is now contained in the popup information. Show this map.
+
+As property type are way too many to adjust on a legend, I'm creating meaningful groups for property type.
+
+```{r}
+lis <- c('500 - Mercantile, business, other',
+'162 - Bar or nightclub',  
+'449 - Hotel/motel, commercial',    
+'519 - Food and beverage sales, grocery store',
+'161 - Restaurant or cafeteria',
+'160 - Eating, drinking places, other',  
+'564 - Laundry, dry cleaning',
+'599 - Business office',
+'180 - Studio/theater, other',
+'592 - Bank',
+'629 - Laboratory or science lababoratory',
+'549 - Specialty shop',
+'511 - Convenience store',
+'580 - General retail, other',
+'569 - Professional supplies, services',
+'640 - Utility or Distribution system, other',
+'635 - Computer center')
+
+
+edlist<- c('210 - Schools, non-adult, other',
+'215 - High school/junior high school/middle school',
+'121 - Ballroom, gymnasium',
+'213 - Elementary school, including kindergarten',
+'241 - Adult education center, college classroom',
+'211 - Preschool')
+
+reclist <- c('114 - Ice rink: indoor, outdoor',
+'143 - Yacht Club',
+'124 - Playground',
+'140 - Clubs, other',
+'142 - Clubhouse',
+'937 - Beach',                                            
+'112 - Billiard center, pool hall',
+'182 - Auditorium, concert hall',
+'898 - Dock, marina, pier, wharf',
+'669 - Forest, timberland, woodland',
+'946 - Lake, river, stream',   
+'940 - Water area, other')
+
+citylist <- c('900 - Outside or special property, other',
+'962 - Residential street, road or residential driveway',
+'322 - Alcohol or substance abuse recovery center',
+'931 - Open land or field',
+'960 - Street, other',
+'131 - Church, mosque, synagogue, temple, chapel',
+'880 - Vehicle storage, other',
+'891 - Warehouse',
+'963 - Street or road in commercial area',                 
+'365 - Police station',                                    
+'331 - Hospital - medical or psychiatric',                
+'571 - Service station, gas station', 
+'961 - Highway or divided highway',                           
+'150 - Public or government, other',                      
+'581 - Department or discount store',         
+'839 - Refrigerated storage',                               
+'642 - Electrical distribution',
+'981 - Construction site',                                 
+'922 - Tunnel',
+'342 - Doctor, dentist or oral surgeon office',            
+'340 - Clinics, doctors offices, hemodialysis cntr, other',
+'596 - Post office or mailing firms',
+'311 - 24-hour care Nursing homes, 4 or more persons',
+'807 - Outside material storage area',                    
+'921 - Bridge, trestle',
+'363 - Reformatory, juvenile detention center',            
+'974 - Aircraft loading area',
+'648 - Sanitation utility',
+'130 - Places of worship, funeral parlors, other')
+
+indlis <- c('174 - Rapid transit station',
+'965 - Vehicle parking area',
+'881 - Parking garage, (detached residential garage)',
+'173 - Bus station',  
+'951 - Railroad right-of-way',
+'882 - Parking garage, general vehicle',
+'952 - Railroad yard',
+'700 - Manufacturing, processing',
+'579 - Motor vehicle or boat sales, services, repair',
+'899 - Residential or self-storage units',
+'800 - Storage, other',                                    
+'UUU - Undetermined',         
+'808 - Outbuilding or shed',
+'NNN - None',
+'984 - Industrial plant yard - area')
+
+reslis <- c(
+'000 - Property Use, other',
+'400 - Residential, other',                                
+'439 - Boarding/rooming house, residential hotels',       
+'460 - Dormitory-type residence, other',                                   
+'464 - Barracks, dormitory',                               
+'459 - Residential board and care')
+```
+
+Assiging grouped values
+
+```{r}
+for (i in 1:length(sevFire$PROPERTY_USE_DESC)) {
+if (sevFire$PROPERTY_USE_DESC[i] %in% lis) {
+  
+  sevFire$Grouping[i] <- 'Commercial'
+}
+  else if (sevFire$PROPERTY_USE_DESC[i] %in% edlist){
+    sevFire$Grouping[i] <- 'Educational'
+  }
+  else if (sevFire$PROPERTY_USE_DESC[i] %in% reclist){
+    sevFire$Grouping[i] <- 'Recreational'
+  }
+  else if (str_trim(sevFire$PROPERTY_USE_DESC[i]) %in% str_trim(citylist)) {
+    sevFire$Grouping[i] <- 'CityFacilities'
+  }
+  else if (str_trim(sevFire$PROPERTY_USE_DESC[i]) %in% str_trim(indlis)) {
+    sevFire$Grouping[i] <- 'Industrial'
+  }
+  else if (str_trim(sevFire$PROPERTY_USE_DESC[i]) %in% str_trim(reslis)) {
+    sevFire$Grouping[i] <- 'OtherResidential'
+  }
+  else if (str_trim(sevFire$PROPERTY_USE_DESC[i]) == '429 - Multifamily dwelling') {
+    sevFire$Grouping[i] <- '429 - Multifamily dwelling'
+  }
+  else if (str_trim(sevFire$PROPERTY_USE_DESC[i]) == '419 - 1 or 2 family dwelling') {
+    sevFire$Grouping[i] <- '419 - 1 or 2 family dwelling'
+  }
+}
+```
+
+Now plotting the incidents as categorized by their property use decription.
+
+```{r}
+content <- paste("Incident:",head(sevFire$INCIDENT_TYPE_DESC),"<br/>",
+                 "When:",sevFire$INCIDENT_DATE_TIME,"<br/>",
+                 "Where:",sevFire$BOROUGH_DESC,"<br/>",
+                 "Severity:",sevFire$FIRE_SPREAD_DESC,"<br/>",
+                 "Property_Type:",sevFire$PROPERTY_USE_DESC,"<br/>")
+
+pal = colorFactor("Set1", domain = sevFire$Grouping)
+
+
+
+r <- leaflet(sevFire) %>%
+  addProviderTiles(providers$CartoDB.Positron) %>%
+  addCircles(lng = ~Longitude, lat = ~Latitude, color=pal(sevFire$Grouping), popup= content) %>%
+  #fitBounds(-74.240612,40.849800,  -73.771518, 40.595493)
+  setView(-73.947453, 40.737046,zoom=10) %>%
+  addLegend(pal = pal, values = ~sevFire$Grouping, title = "Property Type")
+
+r
+```
+### b) Cluster
+
+Add marker clustering, so that zooming in will reveal the individual locations but the zoomed out map only shows the clusters. Show the map with clusters.
+
+Now creating clusters on the map.
+
+```{r}
+content <- paste("Incident:",head(sevFire$INCIDENT_TYPE_DESC),"<br/>",
+                 "When:",sevFire$INCIDENT_DATE_TIME,"<br/>",
+                 "Where:",sevFire$BOROUGH_DESC,"<br/>",
+                 "Severity:",sevFire$FIRE_SPREAD_DESC,"<br/>",
+                 "Property_Type:",sevFire$PROPERTY_USE_DESC,"<br/>")
+
+pal = colorFactor("Set1", domain = sevFire$Grouping)
+
+r <- leaflet(sevFire) %>%
+  addProviderTiles(providers$CartoDB.Positron) %>%
+  addCircleMarkers(lng = ~Longitude, lat = ~Latitude,               color=pal(sevFire$Grouping), popup= content, clusterOptions = markerClusterOptions()) %>%
+  #fitBounds(-74.240612,40.849800,  -73.771518, 40.595493)
+  setView(-73.947453, 40.737046,zoom=11) %>%
+  addLegend("topright",pal = pal, values = ~sevFire$Grouping, title = "Property Type")
+
+r
+```
+
+## 3. Fire Houses
+The second data file contains the locations of the 218 firehouses in New York City. Start with the non-clustered map (2b) and now adjust the size of the circle markers by severity (TOTAL_INCIDENT_DURATION or UNITS_ONSCENE seem plausible options). More severe incidents should have larger circles on the map. On the map, also add the locations of the fire houses. Add two layers (“Incidents”, “Firehouses”) that allow the user to select which information to show.
+
+Again since Total Incident Duration had large number of values, I've divided the values in 5 buckets and stored it in 'severity' column of the dataframe.
+
+```{r}
+
+pal = colorFactor("Set1", domain = sevFire$Grouping)
+
+sevFire$severity <- findInterval(sevFire$TOTAL_INCIDENT_DURATION,c(767,2767,4619,8462,428335))
+
+content <- paste("Incident:",head(sevFire$INCIDENT_TYPE_DESC),"<br/>",
+                 "When:",sevFire$INCIDENT_DATE_TIME,"<br/>",
+                 "Where:",sevFire$BOROUGH_DESC,"<br/>",
+                 "Severity:",sevFire$severity,"<br/>",
+                 "Property_Type:",sevFire$PROPERTY_USE_DESC,"<br/>")
+
+r <- leaflet(sevFire) %>%
+  addProviderTiles(providers$CartoDB.Positron) %>%
+  addCircleMarkers(lng = ~Longitude, lat = ~Latitude,               color=pal(sevFire$Grouping), popup= content, radius = sevFire$severity) %>%
+  #fitBounds(-74.240612,40.849800,  -73.771518, 40.595493)
+  setView(-73.947453, 40.737046,zoom=11) %>%
+  addLegend("topright",pal = pal, values = ~sevFire$Grouping, title = "Property Type")
+
+r
+```
+
+
+Now reading in the Firehouse file and creating a map with different layers the user can choose from.
+
+```{r}
+##Reading second file
+firehouse <- read_csv('Data/FDNY_Firehouse_Listing.csv')
+
+firehouse <- firehouse %>% filter( is.na(firehouse$Latitude)==FALSE | is.na(firehouse$Longitude)==FALSE)
+
+## Creating extinguisher marker
+firextn <- makeIcon(
+  iconUrl = "data/fire-extinguisher.svg",iconWidth = 10, iconHeight = 8
+)
+
+m_l1 = leaflet(sevFire) %>% 
+ setView(-73.947453, 40.737046,zoom=11) %>%
+ # Base groups = Background layer
+addTiles(group = "OpenStreetMap") %>%
+  addProviderTiles(providers$CartoDB.Positron, group = "CartoPositron") %>%
+# Data Layers
+## First Data Layer: Life Expectancy
+addCircleMarkers(group= 'Incidents',lng = ~Longitude, lat = ~Latitude,               color=pal(sevFire$Grouping), popup= content, radius = sevFire$severity) %>%
+#fitBounds(-74.240612,40.849800,  -73.771518, 40.595493)
+setView(-73.947453, 40.737046,zoom=11) %>%
+addLegend("topright",pal = pal, values = ~sevFire$Grouping, title = "Property Type")%>%
+  
+## Second data layer
+addPolygons(data <- firehouse$Latitude, firehouse$Longitude ) %>%
+addMarkers(group = 'FireHouses',icon = firextn ,lng = ~firehouse$Longitude, lat = ~firehouse$Latitude,popup= paste("FireStation:",firehouse$FacilityName,"<br/>",
+                   "Where:",firehouse$FacilityAddress )) %>%
+  #fitBounds(-74.240612,40.849800,  -73.771518, 40.595493)
+setView(-73.947453, 40.737046,zoom=11) %>%
+
+ # Layers control
+addLayersControl(
+baseGroups = c("OpenStreetMap","CartoPositron"),
+overlayGroups = c("Incidents","FireHouses"),
+options = layersControlOptions(collapsed = TRUE) )
+
+m_l1
+```
+
+
+## 4. Distance from Firehouse and Response Time
+We now want to investigate whether the distance of the incident from the nearest firehouse varies across the city.
+
+#### a) Calculate Distance
+For all incident locations, identify the nearest firehouse and calculate the distance between the firehouse and the incident location. Provide a scatter plot showing the time until the first engine arrived (the variables INCIDENT_DATE_TIME and ARRIVAL_DATE_TIME) will be helpful. If there are any interesting patterns to highlight, feel free to do so.
+
+```{r}
+library(geosphere)
+library(ggmap)
+
+## Distnace has been convereted to meters from miles
+d <- distHaversine(cbind(sevFire$Longitude, sevFire$Latitude), cbind(firehouse$Longitude, firehouse$Latitude))/1609
+
+sevFire$NearestDis <- d
+
+sevFire$INCIDENT_DATE_TIME <-  mdy_hms(sevFire$INCIDENT_DATE_TIME)
+
+sevFire$ARRIVAL_DATE_TIME <- mdy_hms(sevFire$ARRIVAL_DATE_TIME)
+
+
+sevFire$time_diff <- sevFire$ARRIVAL_DATE_TIME - sevFire$INCIDENT_DATE_TIME
+
+```
+
+Creating a scatter plot between reponse time and distance between incident location and the firehouse to see if there is any pattern.
+
+```{r}
+#plot( sevFire$NearestDis,sevFire$time_diff, xlim=c(0,50), #ylim=c(0,1000), ylab='Time Difference(in minutes)', xlab ='Dis b/w #Firehouse and Point of Incident')
+
+sevFire <- subset(sevFire,sevFire$time_diff>30)
+
+p<- ggplot(subset(sevFire, sevFire$time_diff<800), aes(x = NearestDis,y = time_diff)) + geom_point(aes(color = BOROUGH_DESC), alpha=0.7)+ labs(title='Plot of Response Time vs Nearest Distance',x='Distance from FireStation (in metres)', y= 'Response Time (in seconds)')+ geom_smooth(method=lm) + theme_minimal()
+
+ggplotly(p) %>%
+   layout(autosize = F)
+```
+
+From the plot we can see that there is a postive correlation between the two variables.
+
+Now creating a heatmap to see how this trend is spread across the city.
+
+```{r}
+m_l2 <- leaflet() %>%
+  addTiles()%>%
+  addCircleMarkers(data=sevFire, ~Longitude, ~Latitude, color = ~pal(as.numeric(time_diff)), weight = 3, opacity = 1, fill = TRUE,fillOpacity = 1,  popup = content) %>%
+  addHeatmap(data=sevFire,lng = ~Longitude, lat = ~Latitude, intensity = ~time_diff, blur = 15, radius = 10)
+
+m_l2
+```
+
+
+--- End of Assignment----

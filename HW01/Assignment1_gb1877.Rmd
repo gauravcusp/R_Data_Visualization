@@ -1,0 +1,367 @@
+---
+title: "Assignment1_GauravBhardwaj"
+author: "Gaurav Bhardwaj"
+date: "2/17/2018"
+output: html_document
+keep_md: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+## Scenario
+Imagine you are the data scientist at a respected media outlet -- say the "New York Times". For the Winter Olympics coverage, your editor-in-chief asks you to analyze some data on the history of `Winter Olympics Medals by Year, Country, Event and Gender` and prepare some data visualizations in which you outline the main patterns around which to base the story.
+
+Since there is **no way that all features of the data can be represented** in such a memo, feel free to pick and choose some patterns that would make for a good story -- outlining important patterns and presenting them in a visually pleasing way. 
+
+The full background and text of the story will be researched by a writer of the magazine -- your input should be based on the data and some common sense (i.e. no need to read up on this). 
+
+Provide **polished plots** that are refined enough to include in the magazine with very little further manipulation (already include variable descriptions [if necessary for understanding], titles, source [e.g. "International Olympic Committee"], right color etc.) and are understandable to the average reader of the "New York Times". The design does not need to be NYTimes-like. Just be consistent.
+
+```{r cars}
+## Importing required libraries
+library(plyr)
+library(dplyr)
+library(rvest)
+library(stringr)
+library(rlist)
+library(ggplot2)
+library(plotly)
+library(DT)
+```
+
+## Data
+
+Data that we had was in form of two csv files. One of the datasets had information about Country abbreviation and country names while the other had the information about all the athletes, events, disciplines, their medals and their countries.
+
+```{r pressure, echo=FALSE}
+winter = read.csv('winter.csv',stringsAsFactors = FALSE)
+dict = read.csv('dictionary.csv',stringsAsFactors = FALSE)
+```
+
+Since we have the historic data, there are many countries whose names changed overtime. We need to fix that issue here and consolidate them to the existing countries.
+
+```{r}
+winter[winter$Country == 'TCH',]$Country <- 'SVK'
+winter[winter$Country == 'FRG',]$Country <- 'GER'
+winter[winter$Country == 'URS',]$Country <- 'RUS'
+winter[winter$Country == 'EUA',]$Country <- 'GER'
+winter[winter$Country == 'GDR',]$Country <- 'GER'
+winter[winter$Country == 'EUN',]$Country <- 'RUS'
+winter[winter$Country == 'YUG',]$Country <- 'SCG'
+```
+
+Now that the data is comparitively clean, let's merge the two datasets.
+```{r}
+colnames(dict)[1] <- 'Country_Name'
+mergedData <- merge(winter, dict, by.x=c('Country'),by.y=c('Code'))
+```
+
+## Task 1
+
+- The first task is to Calculate a summary of how many winter games each country medaled in
+
+```{r}
+test_df <- as.data.frame(mergedData %>%group_by(Country) %>% count(Medal) )
+head(test_df)
+test_df <- aggregate(test_df$n, by= list(Category = test_df$Country), FUN=sum)
+test_df <- test_df[order( -test_df$x),] 
+test_df$Category <- factor(test_df$Category, levels = test_df$Category[order(-test_df$x)])
+test_df <- head(test_df[order(test_df$x, decreasing=TRUE), ], 10)
+```
+
+Let's plot this data now
+
+```{r}
+p <- ggplot(test_df[0:10,], aes(x=x, y=reorder(Category, x)))+
+  geom_point(size=2)+ labs(x="Number of Medals by each country", y="")
+
+m <- list(l = 150, r = 100, b = 100, t = 10, pad = 10)
+
+ggplotly(p)%>%
+  layout(autosize = F, width = 600, height = 400,
+         margin = m, #<<
+         yaxis = list(title = "", showticklabels = TRUE),
+         xaxis = list(title = "Number of Medals Won"))
+```
+
+Next task was to calculate how many medals of each type the country won.
+
+```{r fig.width=10, fig.height=6, message=FALSE, warning=FALSE}
+test_df <- as.data.frame(mergedData %>%
+                           group_by(Country) %>% count(Medal) )
+
+test_df <- test_df[order(-test_df$n),] 
+
+## Plotting the data
+p <- ggplot(test_df[1:20,], aes(x=n, y=reorder(Country,n), 
+                            color=Medal)) +
+      geom_point(size=2)+ labs(x="Number of Medals by each country", y="")+
+    theme(legend.title = element_blank())
+
+m <- list(l = 150, r = 100, b = 100, t = 10, pad = 10)
+
+ggplotly(p)%>%
+  layout(autosize = F, width = 600, height = 400,
+         margin = m, #<<
+         yaxis = list(title = "", showticklabels = TRUE),
+         xaxis = list(title = "Number of Medals won"))
+```
+
+Clearly from the plot we know that Russia has won the maximum number of medals in the olympics. Also, from the medal type trend, Russia has won the maximum Gold medals as well. The plot is from a subset of the data where I took top few countries to demonstrate the treds.
+
+Now lets consider the medal counts based on the Gender.
+
+```{r}
+test_df <- as.data.frame(mergedData %>%
+                           group_by(Country, Gender, Medal) %>% count(Medal) )
+test_df <- aggregate(test_df$n, by= list(Category = test_df$Country, 
+                                         Gender = test_df$Gender), FUN=sum)
+test_df <- test_df[order( -test_df$x),] 
+test_df <- head(test_df[order(test_df$x, decreasing=TRUE), ], 20)
+
+p <- ggplot(test_df, aes(x=x, y=reorder(Category,x), 
+                                                   color=Gender, type='bar'))+
+    geom_point(size=2)+ labs(x="Number of Medals by each country", y="")
+
+m <- list(l = 180, r = 120, b = 120, t = 20, pad = 10)
+
+ggplotly(p)%>%
+  layout(autosize = F, width = 800, height = 500,
+         margin = m)
+```
+
+The next task ist to analyze the trend of medals won across the timeframe of winter Olympics. For this purpose, I'm subsetting the data and considering the highest medal grosser i.e. Russia to see the time variation in Olympics medals.
+
+```{r}
+test_df <- mergedData[mergedData$Country_Name == "Russia",] %>%
+  group_by(Year, Medal)%>%
+  count(Medal)
+
+test_df <- aggregate(test_df$n, by= list(Year = test_df$Year), FUN=sum)
+
+plot_ly(test_df, x=~Year, y=~x, type='scatter', mode='lines')%>%
+  layout(xaxis=list(tickangle = 45, title='Year'), yaxis=list(title = 'Medal Count'))
+```
+
+From the trend, we can see that Russia was at the peak of its performance around 1980s but they have been slipping ever since. In 2010 they hit the recors low of 25 medals. After that they jumped off again by winning 68 medals in 2014 winter Olympics. Time variation analysis is intersting for this fact that we can see the chnages in any variable over a course of time.
+
+## Task 2
+
+Calculate the success of athletes in the Olympics
+
+```{r}
+test_df <- as.data.frame(mergedData[mergedData$Medal=='Gold',] %>%
+                           group_by(Country) %>% count(Medal))
+head(test_df)
+test_df <- aggregate(test_df$n, by= list(Country = test_df$Country), FUN=sum)
+test_df <- test_df[order(-test_df$x),] 
+test_df$Country<- factor(test_df$Country, levels = test_df$Country[order(-test_df$x)])
+test_df <- head(test_df[order(test_df$x, decreasing=TRUE), ], 10)
+
+plot_ly(test_df, x = ~Country, y= ~x, type='bar') %>%
+  layout(xaxis = list(title = 'Country'), yaxis=list(title = 'Number of Gold Medals Won'),autosize = F, width = 600, height = 400)
+```
+
+For "success", I considered the paarmeter of maximum number of gold medals i.e. a country is successfull if it has the highest number of Gold medals in the Olympics. From our plot, we know that Russia has been successfull in the Olympics with maximum number of gold medals.
+
+Now adjust the ranking of medal success by (a) GDP per capita and (b) population.
+
+a)GDP per capita
+
+```{r}
+test_df <- as.data.frame(mergedData[mergedData$Medal=='Gold',] %>%
+                           group_by(Country, GDP.per.Capita) %>% count(Medal))
+test_df <- aggregate(test_df$n, by= list(Country= test_df$Country, GDP=test_df$GDP.per.Capita ), FUN=sum)
+test_df <- test_df[order(-test_df$GDP),] 
+test_df$Country<- factor(test_df$Country, levels = test_df$Country[order(-test_df$GDP)])
+#test_df <- head(test_df[order(test_df$x, decreasing=TRUE), ], 10)
+
+plot_ly(test_df, x = ~Country, y= ~x, type='bar') %>%
+  layout(xaxis = list(title = 'Country (By Decreasing GDP)',tickangle = 45), yaxis=list(title = 'Number of Gold Medals Won adjusted by GDP'),
+         autosize = F, width = 800, height = 400)
+
+```
+The plot sorts the countries based on their GDPs and then raises the bars for the number of Gold medals they've won. Many spaces are blank as the countries didn't win a gold ever. Its worth noticing that countries like Australia and Great Britain, although having high GDP, their performance in the Olympics has been low with Australia winning 5 and Breat Britain winning 34 gold medals ever.
+
+
+b) by population.
+
+```{r}
+test_df <- as.data.frame(mergedData[mergedData$Medal=='Gold',] %>%
+                           group_by(Country, Population) %>% count(Medal))
+test_df <- aggregate(test_df$n, by= list(Country= test_df$Country, Population=test_df$Population ), FUN=sum)
+test_df <- test_df[order(-test_df$Population),] 
+test_df$Country<- factor(test_df$Country, levels = test_df$Country[order(-test_df$Population)])
+#test_df <- head(test_df[order(test_df$x, decreasing=TRUE), ], 10)
+
+plot_ly(test_df, x = ~Country, y= ~x, type='bar') %>%
+  layout(xaxis = list(title = 'Country (By Decreasing Population)',tickangle = 45), yaxis=list(title = 'Number of Gold Medals Won adjusted by Population'),
+         autosize = F, width = 800, height = 400)
+```
+
+This plot gives us the Gold medal count adjusted by population. The countries with highest populations such as USA and Russia are at the very begining with their number of Gold medals. Something that catches anyone's attention here is the fact that countries with high popoulation have not been utilizing their resources judiciously as China, Japan, France, Great Britain all have been consistently low on winning Gold medals at the Olympics.
+
+## Task 3
+
+Calculate whether the host nation had an advantage. That is to calculate whether the host country did win more medals when the Winter Olympics was in their country compared to other times.
+
+Here, I used two bar plots to show the difference in number of medals won by the host countries and the number of medals won by any other countries.
+
+Some of the code to extract data from Wikipedia was used from the help provided by the professor.
+
+```{r}
+## Web Scraping from Wikipedia
+wiki_hosts <- read_html("https://en.wikipedia.org/wiki/Winter_Olympic_Games")
+hosts <- html_table(html_nodes(wiki_hosts, "table")[[5]], fill=TRUE)
+hosts <- hosts[-1,1:3]
+hosts$city <- str_split_fixed(hosts$Host, n=2, ",")[,1]
+hosts$country <- str_split_fixed(hosts$Host, n=2, ",")[,2]
+hosts <- as.data.frame(hosts)
+head(hosts, n=10)
+```
+
+We can see from the dataset, some of the entries in the Host column are not exactly what we wanted (Awarded to ___ due to WWII). We'll remove that data in next step
+
+```{r}
+## Removing unwanted entries 
+vec= c()
+for (i in 1:length(hosts$city)) {
+  vec[i] <- startsWith(hosts$city[i], 'Awarded') == FALSE
+}
+
+hosts <- hosts[vec,]
+head(hosts)
+
+for (i in 1:length(hosts$country)) {
+  hosts$country[i] <- str_trim(hosts$country[i])
+}
+```
+
+Now that we have clean dataset, we can merge this data with our existing dataset and contnue with the analysis.
+
+```{r}
+## merging merged dataset and hosts
+mergedData$Country_Name <- sapply(mergedData$Country_Name, as.character)
+hostdata <- merge(mergedData, hosts, by.x = 'City', by.y = 'city')
+
+## Medals won by Host
+test_df <- as.data.frame(hostdata %>%
+                           group_by(Country_Name,country) %>% 
+                           count(Medal))
+
+test_df <- aggregate(test_df$n, by= list(Country = test_df$Country_Name, Category = test_df$country), FUN=sum)
+test_df <- test_df[order( -test_df$x),] 
+#test_df$Category <- factor(test_df$Category, levels = test_df$Category[order(-test_df$x)])
+
+m <- list(l = 150, r = 100, b = 100, t = 10, pad = 10)
+
+plot_ly(test_df, x = ~x, y= ~Category, type='bar',orientation='h') %>%
+  layout(autosize = F, width = 600, height = 400,
+         margin = m,xaxis = list(title = 'Number of Medals won by Host Nation',tickangle = 45), 
+         yaxis=list(title = 'Country') )
+
+```
+
+These stats show the number of medals each country won when they hosted the winter Olympics.From the plot above we see that Unites States have won the maximum number of medals when they hosted the winter Olympics followed by Canada and Austria. 
+
+Now lets have a look at the actual all time winners at the Olympics
+
+```{r}
+## Actual Winner
+test_df <- as.data.frame(hostdata %>%
+                group_by(Country_Name) %>% 
+                        count(Medal))
+
+test_df <- aggregate(test_df$n, by= list(Category = test_df$Country_Name), FUN=sum)
+test_df <- test_df[order( -test_df$x),] 
+test_df$Category <- factor(test_df$Category, levels = test_df$Category[order(-test_df$x)])
+
+m <- list(l = 150, r = 100, b = 100, t = 10, pad = 10)
+
+plot_ly(test_df, x = ~x, y= ~Category, type='bar',orientation='h') %>%
+  layout(autosize = F, width = 600, height = 400,
+         margin = m,xaxis = list(title = 'Number of Medals won by Host Nation',tickangle = 45), 
+         yaxis=list(title = 'Country') )
+
+
+```
+
+These are the counties who have won the maximum medals in the Olympics. When we compare the numbers on the plaots above, we find that US won 701 medals in total and 261 were won when they hosted the Olympics. Also, Austria in total won 295 medals and of them 204 were won when they hosted the Olumpics. Clearly these countries have had an advantage of winning medals on their home ground. 
+
+## Task 4
+
+Compare countries' success by looking at particular sports, disciplines, and/or events.
+
+For the smplicity of analysis, I chose one discipline(Alpine Skiing) of the events and analysed how different countries performed for this discipline.
+
+```{r}
+
+alp_ski = hostdata[hostdata$Discipline == 'Alpine Skiing',]
+
+test_df <- as.data.frame(alp_ski %>%
+                             group_by(Country_Name,Event) %>% 
+                              count(Medal))
+test_df <- aggregate(test_df$n, by= list(Event = test_df$Event, Country = test_df$Country_Name), FUN=sum)
+test_df <- test_df[order( -test_df$x),] 
+#test_df$Country <- factor(test_df$Country, levels = test_df$Country[order(-test_df$x)])
+
+plot_ly(test_df[1:50,], x= ~Event, y =~Country, z=~x, type='scatter3d')%>%
+#  layout(scene = list(xaxis = list(title = 'Event'),
+#                      yaxis = list(title = 'Medal Count')))
+ layout(scene = list(xaxis = list(title = 'Event'),
+                      yaxis = list(title = 'Country'),
+                      zaxis = list(title = 'Medal Count')))
+```
+
+This 3-d representation of data gives us information about the number of medals each country won and for the event this discipline was part of. The Country with highest number of medals for this Discipline in Downhill event was Austria with 40 medals in total. Austria is followed by Switzerland with 22 medals in Downhill event.
+
+##Task 5
+
+Now, let's look at the most successful athletes. Provide a visual display of the most successful athletes of all time. Consider using other information on gender, sport, discipline, event, year, and country to make the display more informative.
+
+```{r}
+test_df <- as.data.frame(hostdata %>%
+                           group_by(Athlete, Discipline,Country_Name) %>% 
+                           count(Medal))
+
+test_df <- aggregate(test_df$n, by= list( Athlete = test_df$Athlete, 
+                                      Discipline = test_df$Discipline, Country = test_df$Country_Name), FUN=sum)
+test_df <- test_df[order( -test_df$x),]
+#test_df$Athlete <- factor(test_df$Athlete, levels = test_df$Athlete[order(-test_df$x)])
+
+plot_ly(test_df[1:50,], x=~Athlete, y=~Discipline, z = ~x, color=~Country, type='scatter3d')%>%
+  layout(scene = list(xaxis = list(title = 'Athlete'),
+                      yaxis = list(title = 'Discipline'),
+                      zaxis = list(title = 'Medal Count')))
+
+```
+
+The task above was to determine the success of individual atheletes in the Olympics. I used some variables to uniquely identify the performance of the athelet such as medals won per event as an athlete can participate in multiple events. From the plot above we see that Raisa Smetanina from Russia has won maximum number of medals(15) for Cross Country Skiing discipline, followed by Ole Einar Bjoerndalen from Norway who won 13 medals for Biathlon discipline. 
+
+
+## Task 6
+
+For my analysis, to enhance readability, I've made almost all the plots interactive.
+
+## Task 7
+
+The task here is to prepare a selected dataset and add a datatable to the output.
+
+```{r}
+dt_data <- hostdata %>%
+    group_by(Sport, Athlete, Gender, Event, Medal, Country_Name, Host) %>%
+  count(Medal)
+colnames(dt_data)[8] <- 'Medals Won'
+datatable(dt_data)
+```
+
+The table above is a datatable that gives the exhaustive information about the athletes, their gender, their partucipating event and the number of medals they've won. The interactive table is beneficial for sorting the data based on any varibale. Also, we can make a search for any given data point such as name of athlete or event.
+
+
+## Conslusion
+
+In conclusion, from this exercise we analysed the Olympics data and gathered various type of information from it. We analyzed countrywide analysis for particular medal type, total number of medals, medals for particular events. We determind the success of countries based on the number of gold medals these countries have won and also the advantage of host countries if any. After country level analysis, we analyzed the data at athlete level and represented the data on a 3D scatter plot based on their discipline, Country and medals won per discipline. 

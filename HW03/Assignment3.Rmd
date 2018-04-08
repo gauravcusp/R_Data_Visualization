@@ -1,0 +1,549 @@
+---
+title: "Assignment3"
+author: "Gaurav Bhardwaj"
+date: "3/29/2018"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(tm)
+library(SnowballC)
+library(parallel)
+library(pbapply)
+library(tidytext)
+library(qdapRegex)
+library(wordcloud)
+require(readr)
+require(dplyr)
+library(ggplot2)
+library(ggthemes)
+library(sentimentr)
+library(quanteda)
+library(stringi)
+library(stringr)
+```
+
+
+
+
+```{r}
+df = read_csv('Data/kickstarter_projects.csv')
+df <- df %>% filter(
+  is.na(df$goal)==FALSE &
+      is.na(df$pledged)==FALSE)
+head(data)
+```
+
+# 1: Identifying Successful Projects
+
+## 1(a)
+a) Success by Category
+There are several ways to identify success of a project: 
+- State (state): Whether a campaign was successful or not. 
+- Pledged Amount (pledged) - Achievement Ratio: Create a variable achievement_ratio by calculating    the percentage of the original monetary goal divided by the actual amount pledged.
+- Number of backers (backers_count) - How quickly the goal was reached (difference between            launched_at and state_changed_at) for those campaigns that were successful.
+
+Use one or more of these measures to visually summarize which categories were most successful in attracting funding on kickstarter. Briefly summarize your findings.
+
+```{r}
+success_data <- filter(df, state=='successful')
+
+state_int<- as.factor(success_data$state)
+levels(state_int) <- 1:length(levels(state_int))
+success_data$state_int <- as.numeric(state_int)
+
+success_data %>% group_by(top_category) %>%summarize(m=n())%>%
+                mutate(top_category= reorder(top_category, m)) %>% 
+ggplot(aes(top_category, m)) + 
+  geom_bar(stat = "identity") + 
+  geom_text(aes(label=top_category, x=top_category, y=0), hjust = 0, color="white") +
+  geom_text(aes(label=m, x=top_category, y=m), hjust = 0, color="black") +
+  xlab("Categories")+ ylab(NULL) +  coord_flip() +
+  theme(axis.title.y=element_blank(), 
+        axis.text.y=element_blank(), 
+        axis.ticks.y=element_blank()) +
+  ggtitle("Number of Successful Projects by Categories (by Successful state)")
+```
+
+```{r}
+df$achievement_ratio <- (df$pledged / df$goal)*100
+```
+
+
+```{r}
+#sub_data <- filter(df, achievement_ratio>=100)
+
+df %>% group_by(top_category) %>%summarize(m=n())%>%
+                mutate(top_category= reorder(top_category, m)) %>% 
+ggplot(aes(top_category, m)) + 
+  geom_bar(stat = "identity") + 
+  geom_text(aes(label=top_category, x=top_category, y=0),hjust = 0, color="white") +
+  geom_text(aes(label=m, x=top_category, y=m), hjust = 0, color="black") +
+  xlab("Categories")+ ylab(NULL) +  coord_flip() +
+  theme(axis.title.y=element_blank(), 
+        axis.text.y=element_blank(), 
+        axis.ticks.y=element_blank()) +
+  ggtitle("Number of Successful Projects by Categories (by achievement ratio)")
+```
+
+
+1(b)
+
+TBD
+
+
+# 2 
+Each project contains a blurb – a short description of the project. While not the full description of the project, the short headline is arguably important for inducing interest in the project (and ultimately popularity and success). Let’s analyze the text.
+
+## 2(a) Cleaning the Text and Word Cloud
+
+To reduce the time for analysis, select the 1000 most successful projects and a sample of 1000 unsuccessful projects. Use the cleaning functions introduced in lecture (or write your own in addition) to remove unnecessary words (stop words), syntax, punctuation, numbers, white space etc. Note, that many projects use their own unique brand names in upper cases, so try to remove these fully capitalized words as well (since we are aiming to identify common words across descriptions). Stem the words left and complete the stems. Create a document-term-matrix.
+
+Provide a word cloud of the most frequent or important words (your choice which frequency measure you choose) among the most successful projects.
+
+- select the 1000 most successful projects
+- sample of 1000 unsuccessful projects
+- Use the cleaning functions
+- remove unique brand names in upper cases
+- Stem the words left and complete the stems
+- Create a document-term-matrix
+
+```{r}
+
+sub <- df[, c("blurb", "top_category","achievement_ratio")]
+sub <- sub[order(-df$achievement_ratio),]
+
+sub <-  sub[!duplicated(df[,c("blurb")]),]
+
+low1000 <- sub[(nrow(sub)-1000):nrow(sub),]
+top1000 <- sub[1:1001,]
+
+df_all <- merge(low1000, top1000, all=TRUE)
+
+corp_low <- Corpus(VectorSource(low1000$blurb))
+
+corp_top <- Corpus(VectorSource(top1000$blurb))
+
+corp_all <- Corpus((VectorSource(df_all$blurb)))
+
+
+removeNumPunct <- function(x){gsub("[^[:alpha:][:space:]]*", "", x)}
+remove_allcaps <- function(x){gsub("\\b[A-Z]+\\b", "", x)}
+remove_wwwwords <- function(x){gsub("www+[a-z]+[:space:]", "", x)}
+remove_comwords <- function(x){gsub("[a-z]+com", "", x)}
+clean_corpus <- function(corpus){
+  corpus <- tm_map(corpus, content_transformer(remove_allcaps))
+  corpus <- tm_map(corpus, removePunctuation)
+  corpus <- tm_map(corpus, content_transformer(remove_wwwwords))
+  corpus <- tm_map(corpus, content_transformer(remove_comwords))
+  corpus <- tm_map(corpus, content_transformer(tolower))
+  #corpus <- tm_map(corpus, content_transformer(replace_symbol))
+  corpus <- tm_map(corpus, removeWords, c(stopwords("en")))  
+    # We could add more stop words as above
+  corpus <- tm_map(corpus, removeNumbers)
+  corpus <- tm_map(corpus, content_transformer(removeNumPunct))
+  corpus <- tm_map(corpus, stripWhitespace)
+  return(corpus)
+}
+
+clean_1000low <- clean_corpus(corp_low)
+clean_1000top <- clean_corpus(corp_top)
+clean_all <- clean_corpus(corp_all)
+```
+
+
+
+
+```{r}
+stemmed_1000low <- tm_map(clean_1000low, stemDocument)
+stemmed_1000top <- tm_map(clean_1000top, stemDocument)
+stemmed_all <- tm_map(clean_all, stemDocument)
+
+stemCompletion2 <- function(x, dictionary) {
+   x <- unlist(strsplit(as.character(x), " "))
+    # # Oddly, stemCompletion completes an empty string to
+      # a word in dictionary. Remove empty string to avoid issue.
+   x <- x[x != ""]
+   x <- stemCompletion(x, dictionary=dictionary)
+   x <- paste(x, sep="", collapse=" ")
+   PlainTextDocument(stripWhitespace(x))
+}
+
+
+stem_low1000 <- lapply(stemmed_1000low, stemCompletion2, 
+                     dictionary=clean_1000low)
+
+for (i in 1:length(stem_low1000)) {
+  meta(stem_low1000[[i]]) <- NULL
+}
+
+stem_top1000 <- lapply(stemmed_1000top, stemCompletion2, 
+                     dictionary=clean_1000top)
+
+for (i in 1:length(stem_top1000)) {
+  meta(stem_top1000[[i]]) <- NULL
+}
+
+stem_all <- lapply(stemmed_all, stemCompletion2,
+                   dictionary=clean_all)
+
+for (i in 1:length(stem_all)) {
+  meta(stem_all[[i]]) <- NULL
+}
+```
+
+Converting TDM to matirices
+
+
+
+```{r}
+
+## Creaying TDMs
+
+low1000_comp_all <- Corpus(VectorSource(stem_low1000))
+
+low1000_comp_all <- tm_map(low1000_comp_all, removeWords, c("list", "content"))
+
+top1000_comp_all <- Corpus(VectorSource(stem_top1000))
+
+top1000_comp_all <- tm_map(top1000_comp_all, removeWords, c("list", "content"))
+
+all_comp <- Corpus(VectorSource(stem_all))
+
+all_comp <- tm_map(all_comp, removeWords, c("list", "content"))
+
+low1000_tdm <- TermDocumentMatrix(low1000_comp_all)
+
+top1000_tdm <- TermDocumentMatrix(top1000_comp_all)
+
+all_tdm <- TermDocumentMatrix(all_comp)
+
+low1000_m <- as.matrix(low1000_tdm)
+
+top1000_m <- as.matrix(top1000_tdm)
+
+all_m <- as.matrix(all_tdm)
+```
+
+jhgjh
+
+```{r}
+## Tidying objects
+
+low1000_tidy <- tidy(low1000_tdm)
+head(low1000_tidy)
+top1000_tidy <- tidy(top1000_tdm)
+head(top1000_tidy)
+
+all_tidy <- tidy(all_tdm)
+head(all_tidy)
+```
+
+
+Creating frequency plot
+
+```{r}
+low1000_tidy %>%     group_by(term) %>%
+                summarise(n = sum(count)) %>%
+                top_n(n = 15)  %>%
+                ungroup() %>%
+                mutate(term = reorder(term, n)) %>%
+ggplot(aes(term, n)) + 
+  geom_bar(stat = "identity") + 
+  geom_text(aes(label=term, x=term, y=0),hjust = 0, color="white") +
+  geom_text(aes(label=n, x=term, y=n), hjust = 0, color="black") +
+  xlab(NULL)+ ylab(NULL) +  coord_flip() +
+  theme(axis.title.y=element_blank(), 
+        axis.text.y=element_blank(), 
+        axis.ticks.y=element_blank()) +
+  ggtitle("Most frequent terms in 1000 most unsuccessful programs")
+
+```
+
+
+
+```{r}
+top1000_tidy %>%     group_by(term) %>%
+                summarise(n = sum(count)) %>%
+                top_n(n = 15, wt = n)  %>%
+                ungroup() %>%
+                mutate(term = reorder(term, n)) %>%
+ggplot(aes(term, n)) + 
+  geom_bar(stat = "identity") + 
+  geom_text(aes(label=term, x=term, y=0),hjust = 0, color="white") +
+  geom_text(aes(label=n, x=term, y=n), hjust = 0, color="black") +
+  xlab(NULL)+ ylab(NULL) +  coord_flip() +
+  theme(axis.title.y=element_blank(), 
+        axis.text.y=element_blank(), 
+        axis.ticks.y=element_blank()) +
+  ggtitle("Most frequent terms in 1000 most successful programs")
+
+```
+
+
+## IDF matrices for all the categories
+
+```{r}
+low1000_tf_idf <-  low1000_tidy %>%
+                bind_tf_idf(term, document, count) %>%  
+                arrange(desc(tf_idf)) 
+low1000_tf_idf
+
+```
+
+```{r}
+top1000_tf_idf <-  top1000_tidy %>%
+                bind_tf_idf(term, document, count) %>%  
+                arrange(desc(tf_idf)) 
+top1000_tf_idf
+
+```
+
+
+
+```{r}
+set.seed(1000)
+purple_orange <- brewer.pal(10, "PuOr")
+purple_orange <- purple_orange[-(1:2)]
+# Create a wordcloud for the values in word_freqs
+wordcloud(low1000_tf_idf$term, low1000_tf_idf$tf_idf,max.words = 60,
+          min.freq=1, scale = c(0.1,2), colors = purple_orange)
+text(x=0.5, y=1.0, "WordCloud for Bottom 1000 Projects")
+
+```
+
+
+```{r}
+set.seed(1011)
+purple_orange <- brewer.pal(10, "PuOr")
+purple_orange <- purple_orange[-(1:2)]
+# Create a wordcloud for the values in word_freqs
+wordcloud(top1000_tf_idf$term, top1000_tf_idf$tf_idf,max.words = 50,
+          min.freq=1, scale = c(0.5,3), color =purple_orange )
+
+text(x=0.5, y=1.0, "WordCloud for Top 1000 Projects")
+```
+
+# 2(b) Success in words
+Provide a pyramid plot to show how the words between successful and unsuccessful projects differ in frequency. A selection of 10 - 20 top words is sufficient here.
+
+```{r}
+corp_top1 <- Corpus(VectorSource(stem_top1000))
+corp_top1 <- tm_map(corp_top1, removeWords, c("list", "content"))
+dt_mat_top <- DocumentTermMatrix(corp_top1)
+corp_low1 <- Corpus(VectorSource(stem_low1000))
+corp_low1 <- tm_map(corp_low1, removeWords, c("list", "content"))
+dt_mat_low <- DocumentTermMatrix(corp_low1)
+
+top1000_tidy <- tidy(dt_mat_top)
+low1000_tidy <- tidy(dt_mat_low)
+top20 <- top1000_tidy %>%
+              group_by(term) %>%
+              summarise(n = sum(count))  %>%
+              top_n(n = 20, wt = n) %>%
+              rename(successful=n)
+
+low20 <- low1000_tidy %>%
+              group_by(term) %>%
+              summarise(n = sum(count))  %>%
+              top_n(n = 20, wt = n)%>%
+              rename(unsuccessful=n)
+
+all20 <- full_join(top20, low20, by="term") %>%
+         gather(type, number, -term)
+```
+
+```{r}
+#all20, aes(x = reorder(term, number), y=number, fill=type)
+ggplot() +
+  geom_bar(data = filter(all20, type =='successful'),aes(x = reorder(term, number), y=number, fill=type), stat = "identity") +  
+  geom_bar(data = filter(all20, type == "unsuccessful"),aes(x = reorder(term, number), y=number, fill=type), stat = "identity") + 
+  scale_fill_brewer(palette = "Set1", direction=-1)+coord_flip()  + 
+  labs(title="Pyramid Plot of 20 common words in Unsuccessful & Successful Projects", fontsize=8)+
+  scale_y_continuous(breaks = seq(-50, 50 , 25)) + ylab("")+theme_bw()+
+  #theme_fivethirtyeight()+
+  theme(plot.title = element_text(size = 15))
+
+```
+
+##### After multiple tries I left the above plot in this way as it wouldn't split midway.
+
+# c) Simplicity as a virtue
+These blurbs are short in length (max. 150 characters) but let’s see whether brevity and simplicity still matters. Calculate a readability measure (Flesh Reading Ease, Flesh Kincaid or any other comparable measure) for the texts. Visualize the relationship between the readability measure and one of the measures of success. Briefly comment on your finding.
+
+
+```{r}
+require(quanteda)
+require(dplyr)
+data_corpus <- corpus(all20$term)
+
+FRE_data <- textstat_readability(data_corpus,
+              measure=c('Flesch.Kincaid'))
+
+FRE <- data_frame(FK = FRE_data$Flesch.Kincaid,
+    category = all20$type ,
+    words = ntoken(data_corpus),
+    achievement = as.numeric(all20$number))
+
+```
+Plotting the FRE
+
+```{r}
+ggplot(data=FRE, aes(x=achievement,y=FK, size=words)) + 
+  geom_point(alpha=0.5) + geom_smooth() + guides(size=FALSE) +
+  theme_tufte(22) + xlab("") + ylab("Flesch-Kincaid Grade Level") + theme(legend.position="none")+
+  labs(title='Relationship Between the Readability Measure & Achievement Ratio')+
+  theme(plot.title = element_text(size = 15))
+
+```
+
+# 3. Sentiment
+Now, let’s check whether the use of positive / negative words or specific emotions helps a project to be successful.
+
+# a) Stay positive
+Calculate the tone of each text based on the positive and negative words that are being used. You can rely on the Hu & Liu dictionary provided in lecture or use the Bing dictionary contained in the tidytext package (tidytext::sentiments). Visualize the relationship between tone of the document and success. Briefly comment.
+
+
+```{r}
+
+mytext <- get_sentences(sub$blurb)
+
+sent <- sentiment_by(mytext)
+
+```
+
+```{r}
+sub$sentiment <- sent$ave_sentiment
+```
+
+```{r}
+ggplot(data=sub, aes(y=sentiment,x=achievement_ratio)) + 
+  geom_point(alpha=0.5) + geom_smooth() + xlab("Success") + ylab("Tone of Document") + 
+  labs(title='Relationship Between Tone of the Document and Success.')+
+  theme(plot.title = element_text(size = 15))+ xlim(0,2.5e+05)+ ylim(-1,1)
+
+```
+From the plot we can infer, With increase in achievement ratio, we see more positive tone in documents than negative.
+
+# 2 (b) Positive vs negative
+Segregate all 2,000 blurbs into positive and negative texts based on their polarity score calculated in step (a). Now, collapse the positive and negative texts into two larger documents. Create a document-term-matrix based on this collapsed set of two documents. Generate a comparison cloud showing the most-frequent positive and negative words.
+
+
+```{r}
+pos_words <- readLines("Data/dictionaries/positive-words.txt")
+pos_words <- stri_enc_toutf8(pos_words, is_unknown_8bit = T) 
+negwords <- readLines("Data/dictionaries/negative-words.txt")
+negwords <- stri_enc_toutf8(negwords, is_unknown_8bit = T) 
+
+allwords <- dictionary(list(positive= pos_words, negative=negwords))
+
+
+## Function is derived from stackoverflow
+
+dfmat <- function(data){
+dfm_ <- dfm(data, dictionary = allwords, tolower = T)
+dfm_ <- data.frame(dfm_)
+dfm_$tone <- (dfm_$positive - dfm_$negative)/(dfm_$positive + dfm_$negative)
+dfm_$estimate <- "Positive"
+dfm_$estimate[dfm_$tone < 0] <- "Negative"
+  
+return(dfm_)
+}
+top_dfm <- dfmat(corpus(df$blurb[1:1000]))
+top_dfm <- dplyr::mutate(top_dfm, state="successful")
+
+for (i in 1:nrow(top_dfm)){
+top_dfm$blurb[i] <- stem_top1000[[i]]$content
+}
+
+low_dfm <- dfmat(df$blurb[nrow(df)-1000:nrow(df)])
+low_dfm <- dplyr::mutate(low_dfm, state="unsuccessful")
+
+for (i in 1:nrow(top_dfm)){
+low_dfm$blurb[i] <- stem_low1000[[i]]$content
+}
+
+
+all_dfm <- rbind(top_dfm, low_dfm)
+```
+
+```{r}
+
+poswords_dfm <- subset(all_dfm, all_dfm$estimate=='Positive')
+negwords_dfm <- subset(all_dfm, all_dfm$estimate=='Negative')
+
+
+corp_top <- Corpus(VectorSource(poswords_dfm$blurb))
+corp_low <- Corpus(VectorSource(negwords_dfm$blurb))
+
+topdtm <- DocumentTermMatrix(corp_top)
+lowdtm <- DocumentTermMatrix(corp_low)
+
+dmatrix <- function(data){
+  matrix <- t(as.matrix(data))
+  v <- sort(quanteda::rowSums(matrix),decreasing=TRUE)
+  d <- data.frame(word = names(v),freq=v)
+  return (d)
+  
+}
+positive_data <- dmatrix(topdtm)
+negative_data <- dmatrix(lowdtm)
+
+combine_data <- merge(positive_data, negative_data,by="word")
+rownames(combine_data) <- combine_data$word
+colnames(combine_data) <- c("Word","Positive","Negative")
+```
+
+
+```{r}
+set.seed(123)
+c <- comparison.cloud(combine_data[,2:3], max.words = 200, scale=c(4,.5), random.order=FALSE, rot.per=.1,
+	colors=brewer.pal(ncol(combine_data[,2:3]),"Dark2"),
+	use.r.layout=FALSE) + title("Comparison Cloud between positive and Negative blurbs", cex.main =1,   font.main= 1, col.main= "blue", outer = TRUE) 
+```
+
+
+
+```{r}
+#devtools::install_github("mjockers/syuzhet")
+library(syuzhet)
+nrc <- get_nrc_sentiment(all_dfm$blurb)
+all_data <- cbind(all_dfm, nrc)
+
+all_data <- all_data[,1:15]
+data <- all_data %>%  group_by(state) %>% 
+          summarise(anger= mean(anger),
+                    anticipation= mean(anticipation),
+                    disgust= mean(disgust),
+                    fear= mean(fear),
+                    joy= mean(joy),
+                    sadness= mean(sadness),
+                    surprise= mean(surprise),
+                    trust= mean(trust)
+                    
+                    )
+```
+
+```{r}
+
+##code assistance from stackoverflow
+
+cols <- c("blue", "green", "cyan", "orange", "yellow", "brown", "red","grey")
+ylim <- c(0,max(data[c('anger','anticipation','disgust','fear','joy','sadness','surprise','trust')])*1.8);
+par(lwd=6);
+barplot(
+    t(data[c('anger','anticipation','disgust','fear','joy','sadness','surprise','trust')]),
+    beside=T,
+    ylim=ylim,
+    col=cols,
+    names.arg=data$state,
+    xlab='Emotions',
+    ylab='Average Value',
+    legend.text=c('anger','anticipation','disgust','fear','joy','sadness','surprise','trust'),
+    args.legend=list(text.col=cols,col=cols,border=cols,bty='n')
+) + title("relationship between the use of words for different emotions")
+
+```
+The data doesn't seem to be very consistent with the emotions and therefore there is a big chunk for anticipation. For Successful projects, all the emotions seem to have almost comparable value. 
